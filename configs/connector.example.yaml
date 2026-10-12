@@ -1,0 +1,24 @@
+# ---------- HermesHub 连接器配置示例 ----------
+# 部署在 Hermes 实例所在机器，保持与平台的 WebSocket 长连接
+
+# 平台地址（连接器将换算为 ws:// 或 wss:// 接入）
+platform_url: "http://192.168.1.10:8080"
+
+# 实例接入令牌：在平台「Hermes 实例」页注册实例后获得
+token: "在此填入实例接入令牌"
+
+# 单次指令执行超时（秒）
+timeout_seconds: 1800
+
+# 断线重连间隔（秒）
+reconnect_seconds: 5
+
+# Hermes ACP 子进程（连接器收到指令时启动 hermes acp 会话执行）
+acp:
+  command: "/usr/local/bin/hermes" # Hermes CLI 路径
+  args: ["acp", "--accept-hooks"]  # acp 模式；--accept-hooks 免 TTY 自动接受 hooks
+  # 追加给子进程的环境变量（可选）
+  # env:
+  #   HERMES_PROFILE: default
+  # 指令执行的工作目录（可选，默认连接器启动目录）
+  # work_dir: "D:\\work"

@@ -1,0 +1,9 @@
+node_modules/
+dist/
+data/
+*.log
+.env
+hermeshub-*
+.DS_Store
+*.exe
+connector.yaml
