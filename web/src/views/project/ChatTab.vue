@@ -1,10 +1,15 @@
 <template>
   <div class="chat-wrap">
     <!-- 执行中指示 -->
-    <div v-if="running.length" class="running-bar">
-      <a-tag v-for="d in running" :key="d.id" color="processing">
-        <LoadingOutlined /> {{ d.instance_name }} 执行中
+    <div v-if="running.length || justEnded.length" class="running-bar">
+      <a-tag v-if="running.length" color="processing">
+        <LoadingOutlined /> {{ runningNames }} 执行中<template v-if="runningElapsed">（已执行 {{ runningElapsed }}）</template>
       </a-tag>
+      <template v-else>
+        <a-tag v-for="e in justEnded" :key="e.id" color="error">
+          <CloseCircleOutlined /> {{ e.name }} {{ e.kind }}（耗时 {{ e.duration }}）
+        </a-tag>
+      </template>
     </div>
 
     <!-- 消息流 -->
@@ -28,6 +33,30 @@
             </div>
             <div class="bubble" :class="[m.sender_type, { question: m.msg_type === 'question' }]">
               {{ m.content }}
+              <div v-if="m.msg_type === 'question' && m.sender_type === 'agent' && !m.replied" class="reply-area">
+                <a-button
+                  v-for="(opt, i) in msgOptions(m)"
+                  :key="i"
+                  size="small"
+                  :disabled="replying[m.id]"
+                  @click="onReplyOption(m, opt)"
+                >{{ opt }}</a-button>
+                <div class="reply-input">
+                  <a-input
+                    v-model:value="replyInputs[m.id]"
+                    size="small"
+                    placeholder="回复…"
+                    :disabled="replying[m.id]"
+                    @pressEnter="onReplyInput(m)"
+                  />
+                  <a-button
+                    size="small"
+                    type="primary"
+                    :disabled="replying[m.id] || !(replyInputs[m.id] || '').trim()"
+                    @click="onReplyInput(m)"
+                  >发送</a-button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -58,8 +87,8 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { LoadingOutlined, SendOutlined } from '@ant-design/icons-vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { CloseCircleOutlined, LoadingOutlined, SendOutlined } from '@ant-design/icons-vue'
 import { listMessages, sendMessage, listDispatches } from '../../api'
 import dayjs from 'dayjs'
 
@@ -70,12 +99,20 @@ const props = defineProps({
 
 const messages = ref([])
 const running = ref([])
+const justEnded = ref([])
+const runningStart = ref(0)
+const nowTick = ref(Date.now())
+const replyInputs = reactive({})
+const replying = reactive({})
 const input = ref('')
 const sending = ref(false)
 const initialLoading = ref(true)
 const msgBox = ref(null)
 const stickBottom = ref(true)
 let timer = null
+let tickTimer = null
+let prevRunning = []
+const endedTimers = new Map()
 
 const mentionOptions = computed(() =>
   props.members.map((m) => ({
@@ -88,6 +125,46 @@ const mentionHint = computed(() =>
 )
 
 const fmtTime = (t) => dayjs(t).format('MM-DD HH:mm')
+
+const fmtDuration = (ms) => {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  if (s < 60) return `${s}秒`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}分${s % 60}秒`
+  const h = Math.floor(m / 60)
+  return `${h}时${m % 60}分${s % 60}秒`
+}
+
+const runningNames = computed(() => running.value.map((d) => d.instance_name).join('、'))
+const runningElapsed = computed(() => {
+  if (!running.value.length || !runningStart.value) return ''
+  return fmtDuration(nowTick.value - runningStart.value)
+})
+
+const msgOptions = (m) => {
+  if (!m.options) return []
+  try {
+    const arr = JSON.parse(m.options)
+    return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string' && x) : []
+  } catch {
+    return []
+  }
+}
+
+const addJustEnded = (d, status) => {
+  justEnded.value = justEnded.value.filter((e) => e.id !== d.id)
+  justEnded.value.push({
+    id: d.id,
+    name: d.instance_name,
+    kind: status === 'timeout' ? '执行超时' : '执行失败',
+    duration: fmtDuration(Date.now() - dayjs(d.created_at).valueOf()),
+  })
+  if (endedTimers.has(d.id)) clearTimeout(endedTimers.get(d.id))
+  endedTimers.set(d.id, setTimeout(() => {
+    justEnded.value = justEnded.value.filter((e) => e.id !== d.id)
+    endedTimers.delete(d.id)
+  }, 4000))
+}
 
 const loadInitial = async () => {
   initialLoading.value = true
@@ -116,6 +193,21 @@ const poll = async () => {
       }
     }
     running.value = dspData.dispatches.filter((d) => d.status === 'pending' || d.status === 'running')
+    if (running.value.length) {
+      runningStart.value = Math.min(...running.value.map((d) => dayjs(d.created_at).valueOf()))
+    } else {
+      runningStart.value = 0
+    }
+    // 终态过渡：上一轮在跑、本轮不在 running 里且状态为 failed/timeout 的派发
+    const curIds = new Set(running.value.map((d) => d.id))
+    for (const d of prevRunning) {
+      if (curIds.has(d.id)) continue
+      const full = dspData.dispatches.find((x) => x.id === d.id)
+      if (full && (full.status === 'failed' || full.status === 'timeout')) {
+        addJustEnded(d, full.status)
+      }
+    }
+    prevRunning = running.value
   } catch {
     // 轮询静默失败，下轮重试
   }
@@ -156,15 +248,54 @@ const onSend = async () => {
   }
 }
 
+const onReply = async (m, content) => {
+  const text = (content || '').trim()
+  if (!text || replying[m.id]) return
+  replying[m.id] = true
+  try {
+    const { data } = await sendMessage(props.projectId, text, m.id)
+    m.replied = true
+    if (data?.message) {
+      messages.value.push(data.message)
+      stickBottom.value = true
+      await nextTick()
+      scrollBottom()
+    }
+    setTimeout(poll, 300)
+  } catch {
+    // 失败提示由 axios 拦截器统一弹出，按钮/输入框在 finally 中恢复
+  } finally {
+    replying[m.id] = false
+  }
+}
+
+const onReplyOption = (m, opt) => onReply(m, opt)
+
+const onReplyInput = async (m) => {
+  const text = (replyInputs[m.id] || '').trim()
+  if (!text) return
+  await onReply(m, text)
+  if (m.replied) replyInputs[m.id] = ''
+}
+
 onMounted(async () => {
   await loadInitial()
   await poll()
   timer = setInterval(poll, 3000)
+  tickTimer = setInterval(() => { nowTick.value = Date.now() }, 1000)
 })
-onUnmounted(() => clearInterval(timer))
+onUnmounted(() => {
+  clearInterval(timer)
+  clearInterval(tickTimer)
+  endedTimers.forEach((t) => clearTimeout(t))
+  endedTimers.clear()
+})
 
 watch(() => props.projectId, async () => {
   messages.value = []
+  running.value = []
+  justEnded.value = []
+  prevRunning = []
   await loadInitial()
 })
 </script>
@@ -252,6 +383,21 @@ watch(() => props.projectId, async () => {
 .bubble.question {
   background: #fff7e6;
   border: 1px solid #ffd591;
+}
+.reply-area {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed #ffd591;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.reply-input {
+  display: flex;
+  gap: 6px;
+  flex: 1 1 180px;
+  min-width: 160px;
 }
 .empty-hint {
   text-align: center;

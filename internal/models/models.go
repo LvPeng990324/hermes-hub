@@ -61,6 +61,8 @@ type Message struct {
 	MsgType          string    `gorm:"size:16;default:normal" json:"msg_type"`
 	MentionIDs       string    `gorm:"size:256" json:"mention_ids"`  // JSON 数组，被 @ 的实例 ID
 	MentionUser      bool      `json:"mention_user"`                 // 是否 @ 了用户（询问场景）
+	Options          string    `gorm:"type:text" json:"options,omitempty"` // question 消息的快捷选项，JSON 数组文本，如 ["是","否"]
+	Replied          bool      `json:"replied"`                          // question 是否已被用户回复
 	CreatedAt        time.Time `gorm:"index:idx_project_msg" json:"created_at"`
 }
 

@@ -59,7 +59,7 @@ Base URL: %s
 
 | 方法与路径 | 说明 | 请求体/参数 |
 |---|---|---|
-| POST /api/tool/messages | 发送消息到项目会话 | {"content":"...", "msg_type":"normal或question", "mentions":["实例名"], "mention_user":false} |
+| POST /api/tool/messages | 发送消息到项目会话 | {"content":"...", "msg_type":"normal或question", "mentions":["实例名"], "mention_user":false, "options":["是","否"]} |
 | GET /api/tool/messages?limit=20 | 读取最近消息 | - |
 | GET /api/tool/context | 重新拉取完整上下文 | - |
 | GET /api/tool/summary | 读取项目状态总结 | - |
@@ -72,6 +72,8 @@ Base URL: %s
 | GET /api/tool/files/{路径} | 下载共享文件 | - |
 | PUT /api/tool/files/{路径} | 上传/覆盖共享文件（请求体为文件内容，支持子目录） | 原始字节 |
 | DELETE /api/tool/files/{路径} | 删除共享文件 | - |
+
+发起询问（msg_type=question）时可在 options 中附带快捷选项数组（如 ["是","否"]），用户将在卡片上看到对应选项按钮，点选即回复；省略 options 则用户只有自定义输入框。
 
 `, base, member.ToolToken)
 

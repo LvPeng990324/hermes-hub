@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -104,6 +105,29 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
+// failDispatchesOnDisconnect 实例断线收尾：把 pending/running 派发标记 failed（断线哨兵文案），并为受影响的项目发系统消息
+// 同实例新连接踢旧连接也会走到这里，条件更新保证幂等（含与迟到 result 的竞争）
+func (h *Hub) failDispatchesOnDisconnect(instanceID uint, instanceName string) {
+	var list []models.Dispatch
+	h.db.Where("instance_id = ? AND status IN ?", instanceID, []string{models.DispatchPending, models.DispatchRunning}).Find(&list)
+	if len(list) == 0 {
+		return
+	}
+	now := time.Now()
+	projectIDs := map[uint]bool{}
+	for _, d := range list {
+		res := h.db.Model(&models.Dispatch{}).
+			Where("id = ? AND status IN ?", d.ID, []string{models.DispatchPending, models.DispatchRunning}).
+			Updates(map[string]any{"status": models.DispatchFailed, "error": errMsgInstanceOffline, "completed_at": &now})
+		if res.RowsAffected > 0 {
+			projectIDs[d.ProjectID] = true
+		}
+	}
+	for pid := range projectIDs {
+		h.orch.postSystemMessage(pid, fmt.Sprintf("❌ 实例 %s 连接断开，执行中止", instanceName))
+	}
+}
+
 // HandleConnectorWS 连接器接入入口：GET /ws/connector?token=xxx
 func (h *Hub) HandleConnectorWS(c *gin.Context) {
 	token := c.Query("token")
@@ -136,6 +160,7 @@ func (h *Hub) HandleConnectorWS(c *gin.Context) {
 		h.mu.Unlock()
 		_ = conn.Close()
 		log.Printf("[hub] 实例 %s (ID=%d) 已断开", inst.Name, inst.ID)
+		h.failDispatchesOnDisconnect(inst.ID, inst.Name)
 	}()
 
 	// 服务端心跳：30s 一次应用层 ping；连接器的 app 层 pong 由读循环续超时，协议层 pong 兜底

@@ -42,6 +42,8 @@ cd web && npm install && npm run dev   # Vite dev server，代理 /api /ws 到 :
 - agent 写回平台一律走 `/api/tool/*`（toolAuthMiddleware 按 ToolToken 鉴权）；管理端走 `/api/*`（JWT）
 - 派发是「每条 @ 指令一个 ACP 会话」；hermes 会把每次 ACP 会话持久化到其主 profile 的 `state.db`（产品上有意保持记忆/技能共享主 profile，接受会话记录可见）
 - 风暴保护：项目 10 分钟内自动派发超过 40 次即暂停
+- 派发状态流转：pending → running → done/failed/timeout；**实例 WS 断开即收尾**——该实例所有 pending/running 派发被条件更新为 failed（error=哨兵「实例连接断开」，hub.go）并发系统消息；连接器重连后孤儿 ACP 的迟到 result 只允许覆盖 error 恰为哨兵的 failed，其余终态不覆盖（orchestrator.go `OnResult`）
+- question 消息支持 `options` 快捷选项（`POST /api/tool/messages` 请求体可选 `options` 数组，存 Message.options JSON 文本）；用户回复走 `POST /api/projects/:id/messages` 的 `reply_to`，服务端自动 @ 原发送者并派发、近似标记 replied=true
 
 ## Hermes 兼容性实测结论（改动前先读）
 

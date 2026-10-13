@@ -1,7 +1,9 @@
 package server
 
 import (
+	"log"
 	"net/http"
+	"os"
 	"strconv"
 
 	"hermeshub/internal/auth"
@@ -186,6 +188,10 @@ func (s *Server) handleDeleteProject(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	// 清理项目共享文件目录；失败只记日志，不阻断删除
+	if err := os.RemoveAll(projectFilesDir(s.cfg, uint(id))); err != nil {
+		log.Printf("[admin] 删除项目 %d 的共享文件目录失败: %v", id, err)
+	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
@@ -297,6 +303,7 @@ func (s *Server) handleSendMessage(c *gin.Context) {
 	pid, _ := strconv.Atoi(c.Param("id"))
 	var req struct {
 		Content string `json:"content" binding:"required"`
+		ReplyTo uint   `json:"reply_to"` // 回复的消息 ID；回复 agent 消息时自动 @ 该实例
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "消息内容不能为空"})
@@ -307,7 +314,7 @@ func (s *Server) handleSendMessage(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
 		return
 	}
-	msg, err := s.orch.UserSendMessage(uint(pid), req.Content)
+	msg, err := s.orch.UserSendMessage(uint(pid), req.Content, req.ReplyTo)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

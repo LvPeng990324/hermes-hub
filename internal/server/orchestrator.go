@@ -17,6 +17,9 @@ import (
 // 用户提及关键字（@用户 / @user 等）
 var userAliases = []string{"用户", "user", "admin", "管理员", "主人"}
 
+// errMsgInstanceOffline 断线收尾的哨兵文案：OnResult 遇到 error 恰为该值的 failed 派发时，允许迟到结果覆盖
+const errMsgInstanceOffline = "实例连接断开"
+
 // Orchestrator 消息总线与指令编排：解析 @、组装上下文、派发指令
 type Orchestrator struct {
 	db  *gorm.DB
@@ -29,12 +32,31 @@ func NewOrchestrator(db *gorm.DB, cfg *config.Config, hub *Hub) *Orchestrator {
 }
 
 // UserSendMessage 用户在项目中发送消息，并派发给被 @ 的实例
-func (o *Orchestrator) UserSendMessage(projectID uint, content string) (*models.Message, error) {
+// replyTo > 0 表示回复某条消息：若被回复者是 agent，自动 @ 该实例并触发派发，同时把它的未回复询问标记为已回复
+func (o *Orchestrator) UserSendMessage(projectID uint, content string, replyTo uint) (*models.Message, error) {
 	members, err := o.membersOf(projectID)
 	if err != nil {
 		return nil, err
 	}
 	mentionIDs, mentionUser := parseMentions(content, members)
+
+	// 回复 agent 消息时自动 @ 发送者（近似配对：同时把它最近的未回复询问标记为已回复）
+	if replyTo > 0 {
+		var replied models.Message
+		if err := o.db.First(&replied, replyTo).Error; err == nil && replied.SenderInstanceID != nil {
+			senderID := *replied.SenderInstanceID
+			for _, m := range members {
+				if m.InstanceID == senderID {
+					if !containsUint(mentionIDs, senderID) {
+						mentionIDs = append(mentionIDs, senderID)
+					}
+					content = "@" + m.Instance.Name + " " + content
+					break
+				}
+			}
+		}
+	}
+
 	idsJSON, _ := json.Marshal(mentionIDs)
 
 	msg := &models.Message{
@@ -50,11 +72,18 @@ func (o *Orchestrator) UserSendMessage(projectID uint, content string) (*models.
 		return nil, err
 	}
 	o.dispatchToMentioned(projectID, msg, members, mentionIDs, 0)
+
+	// 对被 @ 的实例，把它在本项目中最近一条未回复的询问标记为已回复（简单近似，不做精确配对）
+	for _, id := range mentionIDs {
+		o.db.Model(&models.Message{}).
+			Where("project_id = ? AND sender_instance_id = ? AND msg_type = ? AND replied = ?", projectID, id, models.MsgTypeQuestion, false).
+			Update("replied", true)
+	}
 	return msg, nil
 }
 
 // AgentSendMessage Hermes 通过工具 API 发消息；若 @ 了其他实例则继续路由
-func (o *Orchestrator) AgentSendMessage(member *models.ProjectMember, instanceName, content, msgType string, extraMentions []string, mentionUser bool) (*models.Message, error) {
+func (o *Orchestrator) AgentSendMessage(member *models.ProjectMember, instanceName, content, msgType string, extraMentions []string, mentionUser bool, options []string) (*models.Message, error) {
 	if msgType != models.MsgTypeQuestion {
 		msgType = models.MsgTypeNormal
 	}
@@ -75,6 +104,13 @@ func (o *Orchestrator) AgentSendMessage(member *models.ProjectMember, instanceNa
 	}
 	idsJSON, _ := json.Marshal(mentionIDs)
 
+	// question 消息的快捷选项，序列化为 JSON 数组文本存库
+	optionsJSON := ""
+	if msgType == models.MsgTypeQuestion && len(options) > 0 {
+		b, _ := json.Marshal(options)
+		optionsJSON = string(b)
+	}
+
 	msg := &models.Message{
 		ProjectID:        member.ProjectID,
 		SenderType:       models.SenderAgent,
@@ -84,6 +120,7 @@ func (o *Orchestrator) AgentSendMessage(member *models.ProjectMember, instanceNa
 		MsgType:          msgType,
 		MentionIDs:       string(idsJSON),
 		MentionUser:      mentionUser,
+		Options:          optionsJSON,
 	}
 	if err := o.db.Create(msg).Error; err != nil {
 		return nil, err
@@ -157,15 +194,27 @@ func (o *Orchestrator) OnAck(dispatchID uint) {
 }
 
 // OnResult 连接器回传执行结果
+// 可更新条件：当前 pending/running（正常路径），或 failed 且 error 为断线哨兵（连接器重连后孤儿 ACP 结果迟到，允许覆盖为真实结果）；
+// 其余终态（done、failed 非哨兵、timeout）不接受迟到结果
 func (o *Orchestrator) OnResult(dispatchID uint, status, output, errMsg string) {
+	if status != models.DispatchDone {
+		status = models.DispatchFailed
+	}
+	now := time.Now()
+	res := o.db.Model(&models.Dispatch{}).
+		Where("id = ? AND (status IN ? OR (status = ? AND error = ?))",
+			dispatchID,
+			[]string{models.DispatchPending, models.DispatchRunning},
+			models.DispatchFailed, errMsgInstanceOffline).
+		Updates(map[string]any{"status": status, "output": output, "error": errMsg, "completed_at": &now})
+	if res.Error != nil || res.RowsAffected == 0 {
+		return
+	}
+
 	var d models.Dispatch
 	if err := o.db.First(&d, dispatchID).Error; err != nil {
 		return
 	}
-	if status != models.DispatchDone {
-		status = models.DispatchFailed
-	}
-	o.finishDispatch(&d, status, output, errMsg)
 
 	// 若 Hermes 执行期间没有通过工具 API 发言，则把返回文本代为发布，避免用户看不到结果
 	if status == models.DispatchDone && strings.TrimSpace(output) != "" {

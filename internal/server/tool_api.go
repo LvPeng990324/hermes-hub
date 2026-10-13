@@ -42,12 +42,13 @@ func (s *Server) handleToolSendMessage(c *gin.Context) {
 		MsgType     string   `json:"msg_type"`
 		Mentions    []string `json:"mentions"`
 		MentionUser bool     `json:"mention_user"`
+		Options     []string `json:"options"` // 快捷选项，仅 msg_type=question 时有意义
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "content 不能为空"})
 		return
 	}
-	msg, err := s.orch.AgentSendMessage(m, m.Instance.Name, req.Content, req.MsgType, req.Mentions, req.MentionUser)
+	msg, err := s.orch.AgentSendMessage(m, m.Instance.Name, req.Content, req.MsgType, req.Mentions, req.MentionUser, req.Options)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

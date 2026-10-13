@@ -51,7 +51,8 @@ export const removeMember = (pid, mid) => api.delete(`/projects/${pid}/members/$
 
 // ---------- 消息 ----------
 export const listMessages = (pid, params) => api.get(`/projects/${pid}/messages`, { params })
-export const sendMessage = (pid, content) => api.post(`/projects/${pid}/messages`, { content })
+export const sendMessage = (pid, content, replyTo) =>
+  api.post(`/projects/${pid}/messages`, { content, ...(replyTo != null ? { reply_to: replyTo } : {}) })
 
 // ---------- 看板 ----------
 export const listCards = (pid) => api.get(`/projects/${pid}/cards`)
