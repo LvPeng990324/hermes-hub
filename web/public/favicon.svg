@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- 连线：中心 Hub 到三个实例节点 -->
+  <g stroke="#1677ff" stroke-width="4" stroke-linecap="round" opacity="0.45">
+    <line x1="32" y1="34" x2="32" y2="14"/>
+    <line x1="32" y1="34" x2="15" y2="44"/>
+    <line x1="32" y1="34" x2="49" y2="44"/>
+  </g>
+  <!-- 实例节点 -->
+  <g fill="#1677ff">
+    <circle cx="32" cy="14" r="6.5"/>
+    <circle cx="15" cy="44" r="6.5"/>
+    <circle cx="49" cy="44" r="6.5"/>
+  </g>
+  <!-- 中心节点（Hub） -->
+  <circle cx="32" cy="34" r="11" fill="#1677ff"/>
+  <circle cx="32" cy="34" r="4.5" fill="#fff"/>
+</svg>
