@@ -106,6 +106,29 @@ func (s *Server) handleDeleteInstance(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+// handleTestInstance 实例连接测试：经 WS 发 test 探测并测往返延迟
+func (s *Server) handleTestInstance(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	var inst models.Instance
+	if err := s.db.First(&inst, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "实例不存在"})
+		return
+	}
+	latency, err := s.hub.SendTest(uint(id))
+	if err != nil {
+		switch err {
+		case errOffline:
+			c.JSON(http.StatusBadRequest, gin.H{"error": "实例离线，连接器未接入"})
+		case errTestTimeout:
+			c.JSON(http.StatusGatewayTimeout, gin.H{"error": "测试超时，实例未响应"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "latency_ms": latency.Milliseconds()})
+}
+
 // ---------- 项目管理 ----------
 
 func (s *Server) handleListProjects(c *gin.Context) {

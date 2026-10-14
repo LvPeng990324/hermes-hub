@@ -23,6 +23,7 @@
             <div class="inst-actions">
               <a-button size="small" @click="openEdit(inst)">编辑</a-button>
               <a-button size="small" @click="showConnectInfo(inst)">接入信息</a-button>
+              <a-button size="small" :loading="testingId === inst.id" @click="onTest(inst)">测试</a-button>
               <a-popconfirm title="删除实例会同时移出所有项目，确认？" @confirm="onDelete(inst)">
                 <a-button size="small" danger>删除</a-button>
               </a-popconfirm>
@@ -74,11 +75,12 @@
 import { computed, onMounted, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import { PlusOutlined } from '@ant-design/icons-vue'
-import { listInstances, createInstance, updateInstance, deleteInstance } from '../api'
+import { listInstances, createInstance, updateInstance, deleteInstance, testInstance } from '../api'
 
 const instances = ref([])
 const loading = ref(false)
 const creating = ref(false)
+const testingId = ref(null)
 const showCreate = ref(false)
 const showEdit = ref(false)
 const showToken = ref(false)
@@ -155,6 +157,18 @@ const onDelete = async (inst) => {
 const showConnectInfo = (inst) => {
   current.value = inst
   showToken.value = true
+}
+
+const onTest = async (inst) => {
+  testingId.value = inst.id
+  try {
+    const { data } = await testInstance(inst.id)
+    message.success(`连接正常，往返延迟 ${data.latency_ms} ms`)
+  } catch {
+    // 错误由 axios 拦截器统一提示
+  } finally {
+    testingId.value = null
+  }
 }
 </script>
 

@@ -1,7 +1,10 @@
 package server
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -20,10 +23,12 @@ const (
 	// 平台 → 连接器
 	WSTypeDispatch = "dispatch" // 下发指令
 	WSTypePing     = "ping"
+	WSTypeTest     = "test" // 连接测试（平台 → 连接器）
 	// 连接器 → 平台
-	WSTypeAck    = "ack"    // 确认收到指令
-	WSTypeResult = "result" // 指令执行结果
-	WSTypePong   = "pong"
+	WSTypeAck        = "ack"    // 确认收到指令
+	WSTypeResult     = "result" // 指令执行结果
+	WSTypePong       = "pong"
+	WSTypeTestResult = "test_result" // 连接测试回包
 )
 
 // wsInMessage 连接器上行消息
@@ -33,6 +38,7 @@ type wsInMessage struct {
 	Status     string `json:"status"` // done / failed
 	Output     string `json:"output"`
 	Error      string `json:"error"`
+	TestID     string `json:"test_id,omitempty"`
 }
 
 // wsOutMessage 平台下行消息
@@ -41,6 +47,7 @@ type wsOutMessage struct {
 	DispatchID  uint   `json:"dispatch_id,omitempty"`
 	Instruction string `json:"instruction,omitempty"`
 	ToolToken   string `json:"tool_token,omitempty"` // 当次派发的「实例×项目」工具令牌（供连接器注入工具桥）
+	TestID      string `json:"test_id,omitempty"`
 }
 
 type wsConn struct {
@@ -60,10 +67,13 @@ type Hub struct {
 	mu    sync.RWMutex
 	conns map[uint]*wsConn // instanceID -> 连接
 	orch  *Orchestrator
+
+	testMu       sync.Mutex
+	pendingTests map[string]chan struct{} // testID -> 收到 test_result 的完成信号
 }
 
 func NewHub(db *gorm.DB) *Hub {
-	return &Hub{db: db, conns: make(map[uint]*wsConn)}
+	return &Hub{db: db, conns: make(map[uint]*wsConn), pendingTests: make(map[string]chan struct{})}
 }
 
 func (h *Hub) IsOnline(instanceID uint) bool {
@@ -93,6 +103,44 @@ func (h *Hub) SendDispatch(instanceID uint, dispatchID uint, instruction string,
 		return errOffline
 	}
 	return wc.writeJSON(wsOutMessage{Type: WSTypeDispatch, DispatchID: dispatchID, Instruction: instruction, ToolToken: toolToken})
+}
+
+var errTestTimeout = errors.New("实例未响应")
+
+// SendTest 向指定实例的连接器发送 test 探测消息，等待 test_result 回包并测往返延迟
+func (h *Hub) SendTest(instanceID uint) (time.Duration, error) {
+	h.mu.RLock()
+	wc, ok := h.conns[instanceID]
+	h.mu.RUnlock()
+	if !ok {
+		return 0, errOffline
+	}
+
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return 0, err
+	}
+	testID := hex.EncodeToString(buf)
+	done := make(chan struct{}, 1)
+	h.testMu.Lock()
+	h.pendingTests[testID] = done
+	h.testMu.Unlock()
+	defer func() {
+		h.testMu.Lock()
+		delete(h.pendingTests, testID)
+		h.testMu.Unlock()
+	}()
+
+	start := time.Now()
+	if err := wc.writeJSON(wsOutMessage{Type: WSTypeTest, TestID: testID}); err != nil {
+		return 0, err
+	}
+	select {
+	case <-done:
+		return time.Since(start), nil
+	case <-time.After(10 * time.Second):
+		return 0, errTestTimeout
+	}
 }
 
 var errOffline = errOfflineError{}
@@ -203,6 +251,16 @@ func (h *Hub) HandleConnectorWS(c *gin.Context) {
 			h.orch.OnResult(msg.DispatchID, msg.Status, msg.Output, msg.Error)
 		case WSTypePong:
 			// 连接器主动心跳，无需处理
+		case WSTypeTestResult:
+			h.testMu.Lock()
+			if done, ok := h.pendingTests[msg.TestID]; ok {
+				select {
+				case done <- struct{}{}:
+				default:
+				}
+				delete(h.pendingTests, msg.TestID)
+			}
+			h.testMu.Unlock()
 		}
 	}
 }

@@ -35,6 +35,7 @@ export const listInstances = () => api.get('/instances')
 export const createInstance = (data) => api.post('/instances', data)
 export const updateInstance = (id, data) => api.patch(`/instances/${id}`, data)
 export const deleteInstance = (id) => api.delete(`/instances/${id}`)
+export const testInstance = (id) => api.post(`/instances/${id}/test`)
 
 // ---------- 项目 ----------
 export const listProjects = () => api.get('/projects')

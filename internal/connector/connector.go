@@ -41,6 +41,7 @@ type serverMessage struct {
 	DispatchID  uint   `json:"dispatch_id"`
 	Instruction string `json:"instruction"`
 	ToolToken   string `json:"tool_token"` // 本次派发的「实例×项目」工具令牌
+	TestID      string `json:"test_id"`
 }
 
 // Loop 长连接主循环：断线自动重连
@@ -110,6 +111,9 @@ func (c *Connector) serve() error {
 		switch msg.Type {
 		case "ping":
 			_ = writeJSON(map[string]any{"type": "pong"})
+		case "test":
+			log.Printf("[connector] 收到连接测试 (test_id=%s)", msg.TestID)
+			_ = writeJSON(map[string]any{"type": "test_result", "test_id": msg.TestID})
 		case "dispatch":
 			if msg.DispatchID == 0 {
 				continue

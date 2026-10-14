@@ -81,6 +81,7 @@ func (s *Server) setupRouter() *gin.Engine {
 		admin.GET("/instances", s.handleListInstances)
 		admin.POST("/instances", s.handleCreateInstance)
 		admin.PATCH("/instances/:id", s.handleUpdateInstance)
+		admin.POST("/instances/:id/test", s.handleTestInstance)
 		admin.DELETE("/instances/:id", s.handleDeleteInstance)
 
 		admin.GET("/projects", s.handleListProjects)

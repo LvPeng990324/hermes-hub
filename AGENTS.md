@@ -66,4 +66,5 @@ cd web && npm install && npm run dev   # Vite dev server，代理 /api /ws 到 :
 - 指令上下文模板在 `internal/server/context.go`（平台规则、工具说明、项目信息、成员、看板、总结、文件清单、最近消息、当前指令）
 - 派发链路：`orchestrator.Dispatch` → `hub.SendDispatch`（WS）→ connector `execute` → `runACP` → 结果 `OnResult` 回写
 - 改 WS 协议（hub.go 消息结构）时平台与连接器必须**同步重新编译**，两端版本要一起发
+- 实例页「测试」按钮走 WS `test`/`test_result` 往返探测（hub.go `SendTest`，10s 超时），平台与连接器须同步升级
 - 无单测约定：验证靠编译 + `go vet` + 真实链路（起 server/connector，用 Python 发 UTF-8 请求触发派发，看 connector 日志与 DB 内容）
